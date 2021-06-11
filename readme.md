@@ -11,3 +11,13 @@ Please see the following for variable explanation:
 - Peak_AVG_raw: average % turfgrass greenness over the peak disease development stage (4-10 days after inoculation) 
 - SeverityPeak: Categorization of disease severity during the peak disease development stage. The rule to categorize was according to the "Severity4-10" where the medium sample was due to inconsistent three-level severity categorization during the peak disease development stage.
 - pH until N: Bulk soil chemical properties. LOI can be deleted as it's just another measurement of OM (organic matter content).
+
+## Steps to clone the repo locally
+1. In the terminal, go to the folder where you want to put the local repository using `cd`
+
+2. Type:
+```
+git clone https://github.com/solislemuslab/potato-lankau.git
+```
+
+3. Inside this folder, create a subfolder called `data` where you will put the data. This folder is ignored in the `.gitignore` file, so nothing inside this folder will be pushed to github
