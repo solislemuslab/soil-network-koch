@@ -1,0 +1,115 @@
+---
+title: "microbial data"
+output: html_document
+---
+
+paper: https://journals.asm.org/doi/epub/10.1128/AEM.00149-21
+
+This document shows some reproductions of the visualization in the paper above as well as some plots that give an overall understanding about the 3 datasets. (The graphs look better if knitting the document)
+
+```{r read data}
+soil = read.csv("ASV_soil_norm_filt.txt", sep = "\t")
+taxa = read.csv("taxaonomy_variation_filt.txt", sep = "\t")
+vari = read.csv("Variation_Metadata_adj_2group.txt", sep = "\t")
+```
+
+```{r load packages}
+library(tidyverse)
+library(Polychrome)
+library(cowplot)
+```
+
+```{r DAI}
+# a dataset consists of columns of days after inoculation, percentage of greeness, sample number, highly/moderately susceptible
+dai = data.frame(day = c(rep(0, 18), rep(2, 18), rep(4, 18), 
+                    rep(6, 18), rep(8, 18), rep(10, 18), 
+                    rep(12, 18), rep(14, 18), rep(16, 18)),
+            greeness = c(vari$Severity0_Raw, vari$Severity2_Raw,
+            vari$Severity4_Raw, vari$Severity6_Raw,
+            vari$Severity8_Raw, vari$Severity10_Raw,
+            vari$Severity12_Raw, vari$Severity14_Raw,
+            vari$Severity16_Raw),
+            category = rep(c("sample 1", "sample 2", "sample 3",
+                             "sample 4", "sample 5", "sample 6",
+                             "sample 7", "sample 8", "sample 9",
+                             "sample 10", "sample 11", 
+                             "sample 12", "sample 13", 
+                             "sample 14", "sample 15", 
+                             "sample 16", "sample 17", 
+                             "sample 18"), 9),
+            hs = rep(vari$SeverityPeak == "HS", 9),
+            ms = rep(vari$SeverityPeak == "MS", 9))
+
+# a curve plot about the changing percentage of the greeness in each sample
+ggplot(data = dai, mapping = aes(x = day, y = greeness)) +
+  geom_line(aes(colour = category)) +
+  ggtitle("Dollar spot development as indicated by turf greeness decay")
+
+# comparison between HS and MS curve plots
+hs = ggplot(data = dai[dai$hs == TRUE,],
+       mapping = aes(x = day, y = greeness)) +
+  geom_line(aes(colour = category)) +
+  ggtitle("Highly susceptible")
+
+ms = ggplot(data = dai[dai$ms == TRUE,],
+       mapping = aes(x = day, y = greeness)) +
+  geom_line(aes(colour = category)) +
+  ggtitle("Moderately susceptible")
+plot_grid(hs, ms, labels = "AUTO")
+
+# Dollar spot development as indicated by turf greenness decay curve fitted with sigmoidal model throughout 16 days of incubation after dollar spot inoculation
+x = dai$day
+y = dai$greeness
+plot(y~x, xlab = "Days after inoculation", ylab = "% Greeness", main = "The sigmoidal model of the percentage of greeness")
+fit <- nls(y ~ SSlogis(x, Asym, xmid, scal), data = data.frame(x, y))
+lines(seq(0, 16, length.out = 100), 
+      predict(fit, newdata = data.frame(x = seq(0, 16, length.out = 100))), col = "red")
+legend("bottomleft", 
+       legend=c("Samples", "Sigmoidal Fitting"),
+       col=c("black", "red"), pch = c(1, NA), lty=0:1, cex=0.8)
+```
+
+```{r taxaonomy}
+# The dataset consists of the relative abundance of microbiome family for the highly susceptible samples
+df_hs = data.frame(cat = unique(as.factor(taxa$Family)),
+                count = 0)
+for (i in 1:10992)
+  df_hs[df_hs$cat == taxa[i,6],2] = 
+  df_hs[df_hs$cat == taxa[i,6],2] + sum((soil[,c(TRUE, vari$SeverityPeak == "HS")])[i,-1])
+df_hs$count = df_hs$count/sum(df_hs$count)
+
+# The dataset consists of the relative abundance of microbiome family for the moderately susceptible samples
+df_ms = data.frame(cat = unique(as.factor(taxa$Family)),
+                count = 0)
+for (i in 1:10992)
+  df_ms[df_ms$cat == taxa[i,6],2]  = 
+  df_ms[df_ms$cat == taxa[i,6],2] + sum((soil[,c(TRUE, vari$SeverityPeak == "MS")])[i,-1])
+df_ms$count = df_ms$count/sum(df_ms$count)
+
+# The dataset binds df_ms and df_hs together
+family = rbind(df_ms, df_hs)
+family = cbind(family, group = c(rep("MS", 269), rep("HS", 269)))
+
+#Average relative abundances of rhizosphere microbiome from MS and HS turfgrass for the taxa that represent more than 1% of the identified community at family level
+
+#!!MODIFICATION: try to make color discrete
+ggplot(data = family[family$count > 0.01,], mapping = aes(x = group, y = count, color = cat)) +
+  geom_col(aes(fill = cat), colour= "black", position = "fill",
+           alpha = 0.5)+
+  ggtitle("Relative abundance of microbiome(over 1% of the identified community at family level)") +
+  theme_classic()
+```
+
+```{r}
+# Side-by-side boxplot about the average % turfgrass greenness over the peak disease development stage (4-10 days after inoculation) for both highly susceptible and moderately susceptible samples
+par(mfrow=c(1,2),oma = c(0, 0, 2, 0))
+boxplot((vari[vari$SeverityPeak == "HS",])$Peak_AVG_raw, 
+        ylim = c(50, 80), xlab = "HS", ylab = "% Greeness")
+points(y = (vari[vari$SeverityPeak == "HS",])$Peak_AVG_raw, 
+       x = rep(1, 9), col = alpha("green", 0.5), pch = 16)
+boxplot((vari[vari$SeverityPeak == "MS",])$Peak_AVG_raw, 
+        ylim = c(50, 80), xlab = "MS", ylab = "% Greeness")
+points(y = (vari[vari$SeverityPeak == "MS",])$Peak_AVG_raw, 
+       x = rep(1, 8), col = alpha("blue", 0.5), pch = 16)
+mtext("Greenness over the peak disease development stage", outer = TRUE, cex = 1.5)
+```
