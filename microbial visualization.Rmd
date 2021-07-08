@@ -51,7 +51,7 @@ x = dai$day
 y = dai$greeness
 plot((dai[dai$hs == TRUE,])$greeness ~ (dai[dai$hs == TRUE,])$day, xlab = "Days after inoculation", ylab = "% Greeness", main = "The sigmoidal model of the percentage of greeness", col = "blue")
 points((dai[dai$hs != TRUE,])$greeness ~ (dai[dai$hs != TRUE,])$day)
-fit <- nls(y ~ SSlogis(x, Asym, xmid, scal), data = data.frame(x, y))
+fit = nls(y ~ SSlogis(x, Asym, xmid, scal), data = data.frame(x, y))
 lines(seq(0, 16, length.out = 100), 
       predict(fit, newdata = data.frame(x = seq(0, 16, length.out = 100))), col = "red")
 legend("bottomleft", 
