@@ -5,21 +5,22 @@ output: html_document
 
 paper: https://journals.asm.org/doi/epub/10.1128/AEM.00149-21
 
-This document shows some reproductions of the visualization in the paper above as well as some plots that give an overall understanding about the 3 datasets. (The graphs look better if knitting the document)
+This document shows some reproductions of the visualization in the paper above as well as some plots that give an overall understanding about the 3 datasets. (The graphs look better if knitting the document) Also, it includes some hypothesis tests for analyzing the effects of different microbial fungicides on the dollar spot.
 
-```{r read data}
-soil = read.csv("ASV_soil_norm_filt.txt", sep = "\t")
-taxa = read.csv("taxaonomy_variation_filt.txt", sep = "\t")
-vari = read.csv("Variation_Metadata_adj_2group.txt", sep = "\t")
+```{r read data, message=FALSE}
+soil = read.csv("./data/ASV_soil_norm_filt.txt", sep = "\t")
+taxa = read.csv("./data/taxaonomy_variation_filt.txt", sep = "\t")
+vari = read.csv("./data/Variation_Metadata_adj_2group.txt", sep = "\t")
 ```
 
-```{r load packages}
+```{r load packages, message=FALSE}
 library(tidyverse)
 library(Polychrome)
 library(cowplot)
+library(dplyr)
 ```
 
-```{r DAI}
+```{r DAI, message=FALSE}
 # a dataset consists of columns of days after inoculation, percentage of greeness, sample number, highly/moderately susceptible
 dai = data.frame(day = c(rep(0, 18), rep(2, 18), rep(4, 18), 
                     rep(6, 18), rep(8, 18), rep(10, 18), 
@@ -45,34 +46,46 @@ ggplot(data = dai, mapping = aes(x = day, y = greeness)) +
   geom_line(aes(colour = category)) +
   ggtitle("Dollar spot development as indicated by turf greeness decay")
 
-# comparison between HS and MS curve plots
-hs = ggplot(data = dai[dai$hs == TRUE,],
-       mapping = aes(x = day, y = greeness)) +
-  geom_line(aes(colour = category)) +
-  ggtitle("Highly susceptible")
-
-ms = ggplot(data = dai[dai$ms == TRUE,],
-       mapping = aes(x = day, y = greeness)) +
-  geom_line(aes(colour = category)) +
-  ggtitle("Moderately susceptible")
-plot_grid(hs, ms, labels = "AUTO")
-
 # Dollar spot development as indicated by turf greenness decay curve fitted with sigmoidal model throughout 16 days of incubation after dollar spot inoculation
 x = dai$day
 y = dai$greeness
-plot(y~x, xlab = "Days after inoculation", ylab = "% Greeness", main = "The sigmoidal model of the percentage of greeness")
+plot((dai[dai$hs == TRUE,])$greeness ~ (dai[dai$hs == TRUE,])$day, xlab = "Days after inoculation", ylab = "% Greeness", main = "The sigmoidal model of the percentage of greeness", col = "blue")
+points((dai[dai$hs != TRUE,])$greeness ~ (dai[dai$hs != TRUE,])$day)
 fit <- nls(y ~ SSlogis(x, Asym, xmid, scal), data = data.frame(x, y))
 lines(seq(0, 16, length.out = 100), 
       predict(fit, newdata = data.frame(x = seq(0, 16, length.out = 100))), col = "red")
 legend("bottomleft", 
-       legend=c("Samples", "Sigmoidal Fitting"),
-       col=c("black", "red"), pch = c(1, NA), lty=0:1, cex=0.8)
+       legend = c("MS", "HS", "Sigmoidal Fitting"),
+       col = c("black", "blue", "red"), pch = c(1, 1, NA),
+       lty = c(0,0,1), cex=0.8)
+
+# comparison between HS and MS curve plots
+ggplot(data = dai,
+       mapping = aes(x = day, y = greeness)) +
+  geom_point(aes(colour = hs)) +
+  geom_smooth(aes(color = hs), se = FALSE)+
+  ggtitle("Comparison between HS and MS")
+
+# Side-by-side boxplot about the average % turfgrass greenness over the peak disease development stage (4-10 days after inoculation) for both highly susceptible and moderately susceptible samples
+ggplot(vari[vari$SeverityPeak != "Med", ], aes(factor(SeverityPeak), Peak_AVG_raw, color = SeverityPeak)) +
+  geom_boxplot() + 
+  geom_point() +
+  ggtitle("Greenness over the peak disease development stage") +
+  xlab("")
+
+# t-test for the difference between HS and MS
+# The small p-value indicates there is difference, rejecting H0
+fit_ms = lm(greeness~day, data = dai[dai$ms == TRUE,])
+fit_hs = lm(greeness~day, data = dai[dai$hs == TRUE,])
+t.test((dai[dai$ms == TRUE,])$greeness, 
+       (dai[dai$hs == TRUE,])$greeness)
 ```
 
-```{r taxaonomy}
+```{r taxaonomy, message=FALSE, warning=FALSE}
 # The dataset consists of the relative abundance of microbiome family for the highly susceptible samples
 df_hs = data.frame(cat = unique(as.factor(taxa$Family)),
                 count = 0)
+
 for (i in 1:10992)
   df_hs[df_hs$cat == taxa[i,6],2] = 
   df_hs[df_hs$cat == taxa[i,6],2] + sum((soil[,c(TRUE, vari$SeverityPeak == "HS")])[i,-1])
@@ -100,16 +113,63 @@ ggplot(data = family[family$count > 0.01,], mapping = aes(x = group, y = count, 
   theme_classic()
 ```
 
-```{r}
-# Side-by-side boxplot about the average % turfgrass greenness over the peak disease development stage (4-10 days after inoculation) for both highly susceptible and moderately susceptible samples
-par(mfrow=c(1,2),oma = c(0, 0, 2, 0))
-boxplot((vari[vari$SeverityPeak == "HS",])$Peak_AVG_raw, 
-        ylim = c(50, 80), xlab = "HS", ylab = "% Greeness")
-points(y = (vari[vari$SeverityPeak == "HS",])$Peak_AVG_raw, 
-       x = rep(1, 9), col = alpha("green", 0.5), pch = 16)
-boxplot((vari[vari$SeverityPeak == "MS",])$Peak_AVG_raw, 
-        ylim = c(50, 80), xlab = "MS", ylab = "% Greeness")
-points(y = (vari[vari$SeverityPeak == "MS",])$Peak_AVG_raw, 
-       x = rep(1, 8), col = alpha("blue", 0.5), pch = 16)
-mtext("Greenness over the peak disease development stage", outer = TRUE, cex = 1.5)
+```{r hypothesis test, message=FALSE, warning=FALSE}
+# In this dataset, the first column is the relative frequency of each family in HS, and the second column is that in MS
+df = bind_cols(df_hs, df_ms)
+df = df[-c(1,3),]
+df = sapply(df, as.numeric)
+# using t test to check if there are differences in the relative abundance of family types between HS and MS samples 
+t.test(df[1,], df[2,], alternative = "two.sided")
+# delete the two unidentified families
+t.test(df[1,-c(1, 2)], df[,-c(1, 2)], alternative = "two.sided")
+
+# Conduct rank-sum test (not normally distributed) on the relative frequency of each family in HS and MS
+p = c()
+for (i in 1:length(unique(taxa$Family))){
+  x = colSums(soil[taxa$Family
+                   == (taxa$Family)[i], -1])
+  p = c(p, wilcox.test(x[vari$SeverityPeak == "HS"], 
+       x[vari$SeverityPeak != "HS"])$p.value)
+}
+rst = bind_cols(family = unique(taxa$Family), p_value = p)
+head(rst, 10)
+# how many of the relative frequency of family in HS and MS are different
+sum(rst$p_value > 0.05)
+```
+
+```{r difference of top family, message=FALSE}
+df=bind_cols(df_hs, df_ms)
+colnames(df) = c("cat_hs", "count_hs", "cat_ms", "count_ms")
+df = df%>%
+  mutate(diff = abs(count_hs - count_ms))
+df = df[order(-df$diff), ]
+
+a = t(df[1:10,-c(1, 3, 5)])
+colnames(a) = df[1:10, 1]
+barplot(a, beside = TRUE, cex.names = 0.4, 
+        main = "The top 10 differences of relative frequency of family")
+```
+
+```{r correlation matrix, message=FALSE}
+# default correlation matrix in r
+df1 = as.data.frame(t(df_hs))
+df2 = as.data.frame(t(df_ms))
+df3 = bind_rows(df1, df2)
+df3 = df3[-c(1,3),]
+# the values are the percentage of family
+# the first row is hs, the second row is ms
+df3 = sapply(df3, as.numeric)
+# divide each term with the first column, the reference level
+df3[2, ] = df3[2, ]/df3[2, 1]
+df3[1, ] = df3[1, ]/df3[1, 1]
+head(cor(df3))
+# removing the unidentified family
+#cor(df3[, -c(1, 2)])
+
+# take log of each value
+df4 = sapply(df3, log)
+df5 = rbind(df4[1:269], df4[270:538])
+#cor(df5)
+# removing the unidentified family
+#cor(df5[, -c(1, 2)])
 ```
