@@ -18,6 +18,10 @@ library(tidyverse)
 library(Polychrome)
 library(cowplot)
 library(dplyr)
+library(glasso)
+library(BigQuic)
+library(corrplot)
+library(colorRamps);library(igraph);library(RColorBrewer);library(threejs);library(htmlwidgets);
 ```
 
 ```{r DAI, message=FALSE}
@@ -116,25 +120,30 @@ ggplot(data = family[family$count > 0.01,], mapping = aes(x = group, y = count, 
 ```{r hypothesis test, message=FALSE, warning=FALSE}
 # In this dataset, the first column is the relative frequency of each family in HS, and the second column is that in MS
 df = bind_cols(df_hs, df_ms)
-df = df[-c(1,3),]
+df = df[,-c(1,3)]
 df = sapply(df, as.numeric)
 # using t test to check if there are differences in the relative abundance of family types between HS and MS samples 
-t.test(df[1,], df[2,], alternative = "two.sided")
+t.test(df[,1], df[,2], alternative = "two.sided",
+       paired = TRUE)
 # delete the two unidentified families
-t.test(df[1,-c(1, 2)], df[,-c(1, 2)], alternative = "two.sided")
+t.test(df[-c(1, 2), 1], df[-c(1, 2), 2], alternative = "two.sided", 
+       paired = TRUE)
 
 # Conduct rank-sum test (not normally distributed) on the relative frequency of each family in HS and MS
 p = c()
+sample = as.data.frame(x = c(rep(0, 18)))
 for (i in 1:length(unique(taxa$Family))){
-  x = colSums(soil[taxa$Family
-                   == (taxa$Family)[i], -1])
+  x = colSums(soil[taxa$Family== (unique(taxa$Family))[i], -1])
+  sample = cbind(sample, x)
   p = c(p, wilcox.test(x[vari$SeverityPeak == "HS"], 
        x[vari$SeverityPeak != "HS"])$p.value)
 }
+sample = sample[,-1]
+colnames(sample) = unique(taxa$Family)
 rst = bind_cols(family = unique(taxa$Family), p_value = p)
 head(rst, 10)
 # how many of the relative frequency of family in HS and MS are different
-sum(rst$p_value > 0.05)
+sum((rst$p_value)[!is.na(rst$p_value)] > 0.05)
 ```
 
 ```{r difference of top family, message=FALSE}
@@ -151,25 +160,107 @@ barplot(a, beside = TRUE, cex.names = 0.4,
 ```
 
 ```{r correlation matrix, message=FALSE}
-# default correlation matrix in r
-df1 = as.data.frame(t(df_hs))
-df2 = as.data.frame(t(df_ms))
-df3 = bind_rows(df1, df2)
-df3 = df3[-c(1,3),]
-# the values are the percentage of family
-# the first row is hs, the second row is ms
-df3 = sapply(df3, as.numeric)
-# divide each term with the first column, the reference level
-df3[2, ] = df3[2, ]/df3[2, 1]
-df3[1, ] = df3[1, ]/df3[1, 1]
-head(cor(df3))
-# removing the unidentified family
-#cor(df3[, -c(1, 2)])
 
-# take log of each value
-df4 = sapply(df3, log)
-df5 = rbind(df4[1:269], df4[270:538])
-#cor(df5)
-# removing the unidentified family
-#cor(df5[, -c(1, 2)])
+
+for (i in 1:18)
+  sample[i,] = sample[i,]/sample[i,1]
+
+x = (cor(sample))[-1, -1]
+
+sig = 0.5
+  #convert data to numeric in order to run correlations
+  #convert to factor first to keep the integrity of the data - each value will become a number rather than turn into NA
+  df_cor = sample %>% mutate_if(is.character, as.factor)
+  df_cor = df_cor %>% mutate_if(is.factor, as.numeric)
+  #run a correlation and drop the insignificant ones
+  corr = cor(df_cor)
+  #prepare to drop duplicates and correlations of 1     
+  corr[lower.tri(corr,diag=TRUE)] = NA 
+  #drop perfect correlations
+  corr[corr == 1] = NA 
+  #turn into a 3-column table
+  corr = as.data.frame(as.table(corr))
+  #remove the NA values from above 
+  corr = na.omit(corr) 
+  #select significant values  
+  corr = subset(corr, abs(Freq) > sig) 
+  #sort by highest correlation
+  corr = corr[order(-abs(corr$Freq)),] 
+  #print table
+  head(corr, 10)
+  #turn corr back into matrix in order to plot with corrplot
+  mtx_corr = reshape2::acast(corr, Var1~Var2, value.var="Freq")
+  #plot correlations visually
+  #corrplot(mtx_corr, is.corr=FALSE, tl.col="black", na.label=" ", type = 'lower', diag = FALSE)
+  
+```
+
+```{r glasso}
+rho = 0.75
+# rho: regularization parameter for lasso 
+xx = glasso(x, rho = rho)
+#col<- colorRampPalette(c("blue", "white", "red"))(20)
+#heatmap(x = xx$w, col = col, symm = TRUE)
+
+#corrplot(xx$wi, is.corr=FALSE, tl.col="black", na.label=" ", type = 'lower', diag = FALSE)
+
+invcov = xx 
+P = invcov$wi
+colnames(P) = colnames(x); rownames(P) = rownames(x)
+# check symmetry
+if(!isSymmetric(P)) {
+  P[lower.tri(P)] = t(P)[lower.tri(P)]  
+}
+
+# calculate partial correlation matrix
+parr.corr = matrix(nrow=nrow(P), ncol=ncol(P))
+for(k in 1:nrow(parr.corr)) {
+  for(j in 1:ncol(parr.corr)) {
+    parr.corr[j, k] = -P[j,k]/sqrt(P[j,j]*P[k,k])
+  }
+}
+colnames(parr.corr) = colnames(P); rownames(parr.corr) = colnames(P)
+diag(parr.corr) = 0
+
+# build network graph
+graph = graph_from_adjacency_matrix(parr.corr, mode="undirected", weighted=TRUE)
+# drop vertices with no edges
+isolated =  which(degree(graph) == 0)
+graph = delete.vertices(graph, isolated)
+
+# make interactive graph
+graph_js = graphjs(g=graph, 
+                   layout_with_fr(graph, 
+                  weights = 30 * E(graph)$width, dim=3),  #`?layout` to get a list
+                # vertex.shape = names(V(ig_wt)),  # plot nodes as tickers rather than circles
+                vertex.size=0.7,
+                vertex.frame.color="white",
+                vertex.frame.width=0.2,
+                vertex.label=names(V(graph)),  
+                # label nodes with tickers
+                brush=TRUE,  
+                # enable highlighting clicked nodes and their connections
+                showLabels=TRUE,  
+                # show node labels on hover
+                edge.alpha=0.6,  
+                # edge opacity - lower helps when there are dense connections
+                bg="white",  # background colour
+                main="Network graph from Graphical Lasso")
+# save graph
+graph_filename = paste0("./network_graph_rho_", rho, ".html")
+saveWidget(graph_js, file=graph_filename)
+# open in browser
+browseURL(graph_filename)
+```
+
+```{r big-quic}
+ld = seq(from = 0.9, to = 0.99, by = 0.01)
+quic = BigQuic(data.matrix(sample[, -1]), lambda = ld,memory_size = 512, seed = 1,
+use_ram = TRUE)
+# select the optimal lamda value from it
+BigQuic.select(quic)
+# negative relation: green
+# positive relation: red
+# symmetric
+plot(quic)
 ```
