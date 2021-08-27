@@ -1,5 +1,5 @@
 ---
-title: "microbial data"
+title: "microbial visualization"
 output: html_document
 ---
 
@@ -21,7 +21,7 @@ library(dplyr)
 library(glasso)
 library(BigQuic)
 library(corrplot)
-library(colorRamps);library(igraph);library(RColorBrewer);library(threejs);library(htmlwidgets);
+#library(colorRamps);library(igraph);library(RColorBrewer);library(threejs);library(htmlwidgets);
 ```
 
 ```{r DAI, message=FALSE}
@@ -160,8 +160,6 @@ barplot(a, beside = TRUE, cex.names = 0.4,
 ```
 
 ```{r correlation matrix, message=FALSE}
-
-
 for (i in 1:18)
   sample[i,] = sample[i,]/sample[i,1]
 
@@ -193,25 +191,20 @@ sig = 0.5
   #plot correlations visually
   #corrplot(mtx_corr, is.corr=FALSE, tl.col="black", na.label=" ", type = 'lower', diag = FALSE)
   
+#heatmap(solve(x[1:40, 1:40]))
+  
 ```
 
-```{r glasso}
-rho = 0.75
-# rho: regularization parameter for lasso 
-xx = glasso(x, rho = rho)
-#col<- colorRampPalette(c("blue", "white", "red"))(20)
-#heatmap(x = xx$w, col = col, symm = TRUE)
 
-#corrplot(xx$wi, is.corr=FALSE, tl.col="black", na.label=" ", type = 'lower', diag = FALSE)
-
-invcov = xx 
-P = invcov$wi
-colnames(P) = colnames(x); rownames(P) = rownames(x)
+rho = 0.75 #regularization parameter for lasso 
+invcov = glasso(x, rho = rho)
+P = invcov$wi #the sparse inverse covariance matrix (conditional distribution)
+colnames(P) = colnames(x)
+rownames(P) = rownames(x)
 # check symmetry
-if(!isSymmetric(P)) {
+if (!isSymmetric(P)) {
   P[lower.tri(P)] = t(P)[lower.tri(P)]  
 }
-
 # calculate partial correlation matrix
 parr.corr = matrix(nrow=nrow(P), ncol=ncol(P))
 for(k in 1:nrow(parr.corr)) {
@@ -219,15 +212,17 @@ for(k in 1:nrow(parr.corr)) {
     parr.corr[j, k] = -P[j,k]/sqrt(P[j,j]*P[k,k])
   }
 }
-colnames(parr.corr) = colnames(P); rownames(parr.corr) = colnames(P)
+colnames(parr.corr) = colnames(P)
+rownames(parr.corr) = colnames(P)
 diag(parr.corr) = 0
 
 # build network graph
-graph = graph_from_adjacency_matrix(parr.corr, mode="undirected", weighted=TRUE)
+graph = graph_from_adjacency_matrix(parr.corr,
+                                    mode="undirected",
+                                    weighted=TRUE)
 # drop vertices with no edges
 isolated =  which(degree(graph) == 0)
 graph = delete.vertices(graph, isolated)
-
 # make interactive graph
 graph_js = graphjs(g=graph, 
                    layout_with_fr(graph, 
@@ -251,16 +246,21 @@ graph_filename = paste0("./network_graph_rho_", rho, ".html")
 saveWidget(graph_js, file=graph_filename)
 # open in browser
 browseURL(graph_filename)
-```
+
+
 
 ```{r big-quic}
 ld = seq(from = 0.9, to = 0.99, by = 0.01)
 quic = BigQuic(data.matrix(sample[, -1]), lambda = ld,memory_size = 512, seed = 1,
 use_ram = TRUE)
 # select the optimal lamda value from it
-BigQuic.select(quic)
+quic_pre = BigQuic.select(quic)
+quic_pre = quic_pre$precision_matrices
+a = as.matrix(quic_pre[[1]])
 # negative relation: green
 # positive relation: red
 # symmetric
 plot(quic)
 ```
+
+
