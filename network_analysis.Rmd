@@ -1,0 +1,210 @@
+---
+title: "Network Analysis"
+output: html_document
+---
+
+This document uses glasso, correlation matrix, and dissimilarity matrix to construct microbial networks.
+
+```{r load, message=FALSE}
+library(glasso)
+library(qgraph)
+library(igraph)
+library(threejs)
+library(htmlwidgets)
+library(vegan)
+library(MCL)
+sample = read.csv("sample.csv")
+row.names(sample) = sample[,1]
+sample = sample[,-c(1)]
+```
+
+```{r dissimilarity}
+# Create dissimilarity matrix
+diss.mat = as.matrix(vegdist(t(sample[,-1]), method = "bray"))
+diss.cutoff = 0.1
+diss.adj = ifelse(diss.mat <= diss.cutoff, 1, 0)
+# Construct microbiome network from adjacency matrix
+diss.net = graph.adjacency(diss.adj, mode = "undirected",
+                           diag = FALSE)
+```
+
+```{r correlation}
+cor.matrix = cor(sample[,-1], method = "pearson")
+# Convert correlation matrix to binary adjacency matrix
+cor.cutoff = 0.75
+cor.adj = ifelse(abs(cor.matrix) >= cor.cutoff, 1, 0)
+# Construct microbiome network from adjacency matrix
+cor.net = graph.adjacency(cor.adj,
+mode = "undirected",
+diag = FALSE)
+```
+
+```{r glasso}
+x = (cor(sample))[-1, -1]
+rho = 0.75 #regularization parameter for lasso 
+invcov = glasso(x, rho = rho)
+P = invcov$wi #the sparse inverse covariance matrix (conditional distribution)
+colnames(P) = colnames(x)
+rownames(P) = rownames(x)
+# check symmetry
+if (!isSymmetric(P)) {
+  P[lower.tri(P)] = t(P)[lower.tri(P)]  
+}
+# calculate partial correlation matrix
+parr.corr = matrix(nrow=nrow(P), ncol=ncol(P))
+for(k in 1:nrow(parr.corr)) {
+  for(j in 1:ncol(parr.corr)) {
+    parr.corr[j, k] = -P[j,k]/sqrt(P[j,j]*P[k,k])
+  }
+}
+colnames(parr.corr) = colnames(P)
+rownames(parr.corr) = colnames(P)
+diag(parr.corr) = 0
+
+# build network graph
+glasso.net = graph_from_adjacency_matrix(parr.corr,
+                                    mode="undirected",
+                                    weighted=TRUE)
+# drop vertices with no edges
+# isolated =  which(degree(glasso.net) == 0)
+# glasso.net = delete.vertices(glasso.net, isolated)
+```
+
+# make interactive graph
+graph_js = graphjs(g=graph, 
+                   layout_with_fr(graph, 
+                  weights = 30 * E(graph)$width, dim=3),  #`?layout` to get a list
+                # vertex.shape = names(V(ig_wt)),  # plot nodes as tickers rather than circles
+                vertex.size=0.7,
+                vertex.frame.color="white",
+                vertex.frame.width=0.2,
+                vertex.label=names(V(graph)),  
+                # label nodes with tickers
+                brush=TRUE,  
+                # enable highlighting clicked nodes and their connections
+                showLabels=TRUE,  
+                # show node labels on hover
+                edge.alpha=0.6,  
+                # edge opacity - lower helps when there are dense connections
+                bg="white",  # background colour
+                main="Network graph from Graphical Lasso")
+# save graph
+graph_filename = paste0("./network_graph_rho_", rho, ".html")
+saveWidget(graph_js, file=graph_filename)
+# open in browser
+browseURL(graph_filename)
+
+
+```{r analysis}
+net = glasso.net
+#net = diss.net
+#net = cor.net
+
+# convert negative edge weight to positive
+E(net)$weight = E(net)$weight - min(E(net)$weight)
+
+
+#E(net)$weight = as.numeric(floor(E(net)$weight*10^7))
+#https://github.com/igraph/igraph/issues/1009
+#net.cn = closeness(net, mode = "all")
+#net.bn = betweenness(net)
+#net.pr = page_rank(net)$vector
+# hubs: highly connected nodes in a network
+net.hs = hub_score(net)$vector
+
+# plot of abundance vs. centrality
+plot(x = c(sample[1,-1]), y = c(net.hs), 
+     xlab = "Relative abundance", ylab = "Hubbiness score")
+#low abundance, high centrality
+head(sort(net.hs, decreasing=TRUE), n = 9)
+
+
+# Get clusters
+# short random walks tend to stay in the same community
+wt = walktrap.community(net)
+#ml = multilevel.community(net)
+# Get membership of walktrap clusters
+# membership(wt)
+# Get clusters using MCL method
+#adj = as_adjacency_matrix(net)
+#mc = mcl(adj, addLoops = TRUE)
+
+plot_dendrogram(wt)
+centralityPlot(net, 
+               include = c("Degree", "Closeness","Betweenness"),
+               orderBy = "Degree")
+
+deg = degree(net, mode = "all")
+# Degree distribution
+deg.dist = degree_distribution(net, mode = "all", cumulative = T)
+# Plot degree distribution
+plot(deg.dist, xlab = "Nodes degree", ylab = "Probability")
+lines(deg.dist)
+
+#(removing it disconnect the graph)
+AP = articulation.points(net)
+
+# get the membership of the largest cluster
+group = sapply(groups(wt), length)
+key = wt[group == max(group)]
+paste( unlist(key), collapse=', ')
+
+
+# Function that plots network with clusters and node size scaled to hubbiness.Articulation points are circled. Different colors of the nodes represent different communities. All isolated nodes are white.
+# scores: hubbiness scores
+# cls: cluster walkstrao
+# AP: articulation points
+plot.net.cls = function(net, scores, cls, AP, outfile, title) {
+  # Get size of clusters to find isolated nodes.
+  # groups: get a list of vertex groups from community object
+  cls_sizes = sapply(groups(cls), length)
+  # Randomly choosing node colors
+  #colors = sample(colours(), length(cls))
+  colors = rainbow(length(cls))
+  
+  # Nodes in clusters will be color coded
+  # Isolated nodes will be white.
+  V(net)$color = sapply(membership(cls),
+                         function(x) {
+                            ifelse(cls_sizes[x]>1, 
+                                   colors[x],
+                                   "white")
+                            }
+                          )
+  # Convert node label from names to numerical IDs.
+  node.names = V(net)$name
+  col_ids = seq(1, length(node.names))
+  V(net)$name = col_ids
+  # To draw a halo around articulation points.
+  AP = lapply(names(AP), function(x) x)
+  marks = lapply(1:length(AP), 
+                  function(x) which(node.names == AP[[x]]))
+  # Define output image file.
+  outfile = paste(outfile, "jpg", sep=".")
+  # Image properties.
+  jpeg(outfile, width = 5800, height = 14000, res = 300, 
+       quality = 100)
+  par(oma = c(4, 1, 1, 1))
+  # Customized layout to avoid nodes overlapping.
+  e = get.edgelist(net)
+  class(e) = "numeric"
+  #get the layout of the graph
+  l = qgraph.layout.fruchtermanreingold(e,
+    # area default is the square of number of nodes
+    vcount=vcount(net), area=8*(vcount(net)^2))
+  # Main plot function.
+  plot(net, vertex.size = (scores*5)+4, vertex.label.cex=0.9,
+       vertex.label.color = "black", mark.border="black",
+       mark.groups = marks, mark.col = "white", 
+       mark.expand = 10, mark.shape = 1, layout=l)
+  title(title, cex.main=4)
+  # Plot legend containing taxa names
+  labels = paste(as.character(V(net)), node.names, sep = ") ")
+  legend("bottom", legend = labels, xpd = TRUE, ncol = 5, 
+         cex = 1.2)
+  dev.off()
+}
+plot.net.cls(net, net.hs, wt, AP, outfile = "network_graph",
+title = "Microbial Network")
+```
+

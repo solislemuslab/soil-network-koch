@@ -1,0 +1,266 @@
+---
+title: "microbial visualization"
+output: html_document
+---
+
+paper: https://journals.asm.org/doi/epub/10.1128/AEM.00149-21
+
+This document shows some reproductions of the visualization in the paper above as well as some plots that give an overall understanding about the 3 datasets. (The graphs look better if knitting the document) Also, it includes some hypothesis tests for analyzing the effects of different microbial fungicides on the dollar spot.
+
+```{r read data, message=FALSE}
+soil = read.csv("./data/ASV_soil_norm_filt.txt", sep = "\t")
+taxa = read.csv("./data/taxaonomy_variation_filt.txt", sep = "\t")
+vari = read.csv("./data/Variation_Metadata_adj_2group.txt", sep = "\t")
+```
+
+```{r load packages, message=FALSE}
+library(tidyverse)
+library(Polychrome)
+library(cowplot)
+library(dplyr)
+library(glasso)
+library(BigQuic)
+library(corrplot)
+#library(colorRamps);library(igraph);library(RColorBrewer);library(threejs);library(htmlwidgets);
+```
+
+```{r DAI, message=FALSE}
+# a dataset consists of columns of days after inoculation, percentage of greeness, sample number, highly/moderately susceptible
+dai = data.frame(day = c(rep(0, 18), rep(2, 18), rep(4, 18), 
+                    rep(6, 18), rep(8, 18), rep(10, 18), 
+                    rep(12, 18), rep(14, 18), rep(16, 18)),
+            greeness = c(vari$Severity0_Raw, vari$Severity2_Raw,
+            vari$Severity4_Raw, vari$Severity6_Raw,
+            vari$Severity8_Raw, vari$Severity10_Raw,
+            vari$Severity12_Raw, vari$Severity14_Raw,
+            vari$Severity16_Raw),
+            category = rep(c("sample 1", "sample 2", "sample 3",
+                             "sample 4", "sample 5", "sample 6",
+                             "sample 7", "sample 8", "sample 9",
+                             "sample 10", "sample 11", 
+                             "sample 12", "sample 13", 
+                             "sample 14", "sample 15", 
+                             "sample 16", "sample 17", 
+                             "sample 18"), 9),
+            hs = rep(vari$SeverityPeak == "HS", 9),
+            ms = rep(vari$SeverityPeak == "MS", 9))
+
+# a curve plot about the changing percentage of the greeness in each sample
+ggplot(data = dai, mapping = aes(x = day, y = greeness)) +
+  geom_line(aes(colour = category)) +
+  ggtitle("Dollar spot development as indicated by turf greeness decay")
+
+# Dollar spot development as indicated by turf greenness decay curve fitted with sigmoidal model throughout 16 days of incubation after dollar spot inoculation
+x = dai$day
+y = dai$greeness
+plot((dai[dai$hs == TRUE,])$greeness ~ (dai[dai$hs == TRUE,])$day, xlab = "Days after inoculation", ylab = "% Greeness", main = "The sigmoidal model of the percentage of greeness", col = "blue")
+points((dai[dai$hs != TRUE,])$greeness ~ (dai[dai$hs != TRUE,])$day)
+fit = nls(y ~ SSlogis(x, Asym, xmid, scal), data = data.frame(x, y))
+lines(seq(0, 16, length.out = 100), 
+      predict(fit, newdata = data.frame(x = seq(0, 16, length.out = 100))), col = "red")
+legend("bottomleft", 
+       legend = c("MS", "HS", "Sigmoidal Fitting"),
+       col = c("black", "blue", "red"), pch = c(1, 1, NA),
+       lty = c(0,0,1), cex=0.8)
+
+# comparison between HS and MS curve plots
+ggplot(data = dai,
+       mapping = aes(x = day, y = greeness)) +
+  geom_point(aes(colour = hs)) +
+  geom_smooth(aes(color = hs), se = FALSE)+
+  ggtitle("Comparison between HS and MS")
+
+# Side-by-side boxplot about the average % turfgrass greenness over the peak disease development stage (4-10 days after inoculation) for both highly susceptible and moderately susceptible samples
+ggplot(vari[vari$SeverityPeak != "Med", ], aes(factor(SeverityPeak), Peak_AVG_raw, color = SeverityPeak)) +
+  geom_boxplot() + 
+  geom_point() +
+  ggtitle("Greenness over the peak disease development stage") +
+  xlab("")
+
+# t-test for the difference between HS and MS
+# The small p-value indicates there is difference, rejecting H0
+fit_ms = lm(greeness~day, data = dai[dai$ms == TRUE,])
+fit_hs = lm(greeness~day, data = dai[dai$hs == TRUE,])
+t.test((dai[dai$ms == TRUE,])$greeness, 
+       (dai[dai$hs == TRUE,])$greeness)
+```
+
+```{r taxaonomy, message=FALSE, warning=FALSE}
+# The dataset consists of the relative abundance of microbiome family for the highly susceptible samples
+df_hs = data.frame(cat = unique(as.factor(taxa$Family)),
+                count = 0)
+
+for (i in 1:10992)
+  df_hs[df_hs$cat == taxa[i,6],2] = 
+  df_hs[df_hs$cat == taxa[i,6],2] + sum((soil[,c(TRUE, vari$SeverityPeak == "HS")])[i,-1])
+df_hs$count = df_hs$count/sum(df_hs$count)
+
+# The dataset consists of the relative abundance of microbiome family for the moderately susceptible samples
+df_ms = data.frame(cat = unique(as.factor(taxa$Family)),
+                count = 0)
+for (i in 1:10992)
+  df_ms[df_ms$cat == taxa[i,6],2]  = 
+  df_ms[df_ms$cat == taxa[i,6],2] + sum((soil[,c(TRUE, vari$SeverityPeak == "MS")])[i,-1])
+df_ms$count = df_ms$count/sum(df_ms$count)
+
+# The dataset binds df_ms and df_hs together
+family = rbind(df_ms, df_hs)
+family = cbind(family, group = c(rep("MS", 269), rep("HS", 269)))
+
+#Average relative abundances of rhizosphere microbiome from MS and HS turfgrass for the taxa that represent more than 1% of the identified community at family level
+
+#!!MODIFICATION: try to make color discrete
+ggplot(data = family[family$count > 0.01,], mapping = aes(x = group, y = count, color = cat)) +
+  geom_col(aes(fill = cat), colour= "black", position = "fill",
+           alpha = 0.5)+
+  ggtitle("Relative abundance of microbiome(over 1% of the identified community at family level)") +
+  theme_classic()
+```
+
+```{r hypothesis test, message=FALSE, warning=FALSE}
+# In this dataset, the first column is the relative frequency of each family in HS, and the second column is that in MS
+df = bind_cols(df_hs, df_ms)
+df = df[,-c(1,3)]
+df = sapply(df, as.numeric)
+# using t test to check if there are differences in the relative abundance of family types between HS and MS samples 
+t.test(df[,1], df[,2], alternative = "two.sided",
+       paired = TRUE)
+# delete the two unidentified families
+t.test(df[-c(1, 2), 1], df[-c(1, 2), 2], alternative = "two.sided", 
+       paired = TRUE)
+
+# Conduct rank-sum test (not normally distributed) on the relative frequency of each family in HS and MS
+p = c()
+sample = as.data.frame(x = c(rep(0, 18)))
+for (i in 1:length(unique(taxa$Family))){
+  x = colSums(soil[taxa$Family== (unique(taxa$Family))[i], -1])
+  sample = cbind(sample, x)
+  p = c(p, wilcox.test(x[vari$SeverityPeak == "HS"], 
+       x[vari$SeverityPeak != "HS"])$p.value)
+}
+sample = sample[,-1]
+colnames(sample) = unique(taxa$Family)
+rst = bind_cols(family = unique(taxa$Family), p_value = p)
+head(rst, 10)
+# how many of the relative frequency of family in HS and MS are different
+sum((rst$p_value)[!is.na(rst$p_value)] > 0.05)
+```
+
+```{r difference of top family, message=FALSE}
+df=bind_cols(df_hs, df_ms)
+colnames(df) = c("cat_hs", "count_hs", "cat_ms", "count_ms")
+df = df%>%
+  mutate(diff = abs(count_hs - count_ms))
+df = df[order(-df$diff), ]
+
+a = t(df[1:10,-c(1, 3, 5)])
+colnames(a) = df[1:10, 1]
+barplot(a, beside = TRUE, cex.names = 0.4, 
+        main = "The top 10 differences of relative frequency of family")
+```
+
+```{r correlation matrix, message=FALSE}
+for (i in 1:18)
+  sample[i,] = sample[i,]/sample[i,1]
+
+x = (cor(sample))[-1, -1]
+
+sig = 0.5
+  #convert data to numeric in order to run correlations
+  #convert to factor first to keep the integrity of the data - each value will become a number rather than turn into NA
+  df_cor = sample %>% mutate_if(is.character, as.factor)
+  df_cor = df_cor %>% mutate_if(is.factor, as.numeric)
+  #run a correlation and drop the insignificant ones
+  corr = cor(df_cor)
+  #prepare to drop duplicates and correlations of 1     
+  corr[lower.tri(corr,diag=TRUE)] = NA 
+  #drop perfect correlations
+  corr[corr == 1] = NA 
+  #turn into a 3-column table
+  corr = as.data.frame(as.table(corr))
+  #remove the NA values from above 
+  corr = na.omit(corr) 
+  #select significant values  
+  corr = subset(corr, abs(Freq) > sig) 
+  #sort by highest correlation
+  corr = corr[order(-abs(corr$Freq)),] 
+  #print table
+  head(corr, 10)
+  #turn corr back into matrix in order to plot with corrplot
+  mtx_corr = reshape2::acast(corr, Var1~Var2, value.var="Freq")
+  #plot correlations visually
+  #corrplot(mtx_corr, is.corr=FALSE, tl.col="black", na.label=" ", type = 'lower', diag = FALSE)
+  
+#heatmap(solve(x[1:40, 1:40]))
+  
+```
+
+
+rho = 0.75 #regularization parameter for lasso 
+invcov = glasso(x, rho = rho)
+P = invcov$wi #the sparse inverse covariance matrix (conditional distribution)
+colnames(P) = colnames(x)
+rownames(P) = rownames(x)
+# check symmetry
+if (!isSymmetric(P)) {
+  P[lower.tri(P)] = t(P)[lower.tri(P)]  
+}
+# calculate partial correlation matrix
+parr.corr = matrix(nrow=nrow(P), ncol=ncol(P))
+for(k in 1:nrow(parr.corr)) {
+  for(j in 1:ncol(parr.corr)) {
+    parr.corr[j, k] = -P[j,k]/sqrt(P[j,j]*P[k,k])
+  }
+}
+colnames(parr.corr) = colnames(P)
+rownames(parr.corr) = colnames(P)
+diag(parr.corr) = 0
+
+# build network graph
+graph = graph_from_adjacency_matrix(parr.corr,
+                                    mode="undirected",
+                                    weighted=TRUE)
+# drop vertices with no edges
+isolated =  which(degree(graph) == 0)
+graph = delete.vertices(graph, isolated)
+# make interactive graph
+graph_js = graphjs(g=graph, 
+                   layout_with_fr(graph, 
+                  weights = 30 * E(graph)$width, dim=3),  #`?layout` to get a list
+                # vertex.shape = names(V(ig_wt)),  # plot nodes as tickers rather than circles
+                vertex.size=0.7,
+                vertex.frame.color="white",
+                vertex.frame.width=0.2,
+                vertex.label=names(V(graph)),  
+                # label nodes with tickers
+                brush=TRUE,  
+                # enable highlighting clicked nodes and their connections
+                showLabels=TRUE,  
+                # show node labels on hover
+                edge.alpha=0.6,  
+                # edge opacity - lower helps when there are dense connections
+                bg="white",  # background colour
+                main="Network graph from Graphical Lasso")
+# save graph
+graph_filename = paste0("./network_graph_rho_", rho, ".html")
+saveWidget(graph_js, file=graph_filename)
+# open in browser
+browseURL(graph_filename)
+
+
+
+```{r big-quic}
+ld = seq(from = 0.9, to = 0.99, by = 0.01)
+quic = BigQuic(data.matrix(sample[, -1]), lambda = ld,memory_size = 512, seed = 1,
+use_ram = TRUE)
+# select the optimal lamda value from it
+quic_pre = BigQuic.select(quic)
+quic_pre = quic_pre$precision_matrices
+a = as.matrix(quic_pre[[1]])
+# negative relation: green
+# positive relation: red
+# symmetric
+plot(quic)
+```
+
+
